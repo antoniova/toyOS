@@ -80,7 +80,7 @@ int Assembler::assemble(string asmFile)
   while( !infile.eof() ){
       istringstream str( lineOfCode.c_str() );
       str >> opcode;
-      if( !opcode.empty() ){                 //check for black lines
+      if( !opcode.empty() ){                 //check for blank lines
 	  if( instr_set.count(opcode) > 0 )  //make sure instruction is in map
 	      (this->*instr_set[opcode])( outfile, str );
 	  else if( opcode[0] != '!' ){
