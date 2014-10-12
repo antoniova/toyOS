@@ -1,0 +1,76 @@
+#include "Assembler.h"
+#include "VirtualMachine.h"
+#include <queue>
+#include <list>
+using namespace std;
+
+class PCB
+{
+  int PC, SR, SP;
+  int base, limit;
+  vector<int> R;
+  string p_name;
+  ifstream diskIn, ObjFile;
+  ofstream diskOut;
+  fstream stackFile;
+  int VMtime, waitTime;
+  int TurnAroundTime;
+  int IOtime;
+  int stack_size;
+};
+
+class os 
+{
+  os(){}
+  void collectSrcFiles();
+  void compileSrcFiles()
+  void setupIO();
+
+  string asmFile;
+  string objFile;
+  ifstream input;
+  list<PCB*> jobs;
+  queue<PCB*> readyQ, waitQ;
+};
+
+void os::collectSrcFiles()
+{
+ system("ls *.s > src_progs");
+ input.open( "src_progs" );
+}
+
+void os::compileSrcFiles()
+{
+  Assembler a;
+  getline( input, asmFile );
+  while( !input.eof() ){
+      if(  a.assemble(asmFile)  < 0 )
+          return 1;
+      getline( input, asmFile );
+  }
+  input.close();
+}  
+
+int main(int argc, char* argv[])
+{
+  os m
+  VirtualMachine vm;
+  ifstream input;
+
+  /*
+  system("ls *.o > obj_progs");
+  input.open( "obj_progs" );
+
+  getline( input, objFile );
+  while( !input.eof() ){
+      if( !vm.loadExecFile(objFile) ){
+	  cout << "Error loading executable file. " << objFile << " not found\n";
+	  return 1;
+      }
+      vm.runProgram();
+      getline( input, objFile );
+  }
+  input.close();      */
+
+  return 0;
+}

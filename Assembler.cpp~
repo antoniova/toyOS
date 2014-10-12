@@ -1,0 +1,410 @@
+#include "Assembler.h"
+// constructor: populates the map with the address of each function
+Assembler::Assembler()
+{
+  LineNumber = 1;
+  RD = RS = -1;
+  CONST = 129;
+  ADDR = 0;
+  ProgSize = 0;
+  otherError = false;
+  extraArg = "!";
+  instr_set["load"] = &Assembler::load;
+  instr_set["loadi"] = &Assembler::loadi;
+  instr_set["store"] = &Assembler::store;
+  instr_set["add"] = &Assembler::add;
+  instr_set["addi"] = &Assembler::addi;
+  instr_set["addc"] = &Assembler::addc;
+  instr_set["addci"] = &Assembler::addci;
+  instr_set["sub"] = &Assembler::sub;
+  instr_set["subi"] = &Assembler::subi;
+  instr_set["subc"] = &Assembler::subc;
+  instr_set["subci"] = &Assembler::subci;
+  instr_set["and"] = &Assembler::And;
+  instr_set["andi"] = &Assembler::Andi;
+  instr_set["xor"] = &Assembler::Xor;
+  instr_set["xori"] = &Assembler::Xori;
+  instr_set["compl"] = &Assembler::Compl;
+  instr_set["shl"] = &Assembler::shl;
+  instr_set["shla"] = &Assembler::shla;
+  instr_set["shr"] = &Assembler::shr;
+  instr_set["shra"] = &Assembler::shra;
+  instr_set["compr"] = &Assembler::compr;
+  instr_set["compri"] = &Assembler::compri;
+  instr_set["getstat"] = &Assembler::getstat;
+  instr_set["putstat"] = &Assembler::putstat;
+  instr_set["jump"] = &Assembler::jump;
+  instr_set["jumpl"] = &Assembler::jumpl;
+  instr_set["jumpe"] = &Assembler::jumpe;
+  instr_set["jumpg"] = &Assembler::jumpg;
+  instr_set["call"] = &Assembler::call;
+  instr_set["return"] = &Assembler::Return;
+  instr_set["read"] = &Assembler::read;
+  instr_set["write"] = &Assembler::write;
+  instr_set["noop"] = &Assembler::noop;
+  instr_set["halt"] = &Assembler::halt;
+}
+
+int Assembler::assemble(string asmFile)
+{
+  fstream infile, outfile;
+  string line;
+  string objFile = asmFile;
+
+  infile.open( asmFile.c_str(), ios::in );
+  if( !infile.is_open() ){
+      cout << "Error opening input file. " << endl;
+      return -1;
+  }
+  
+  objFile.replace( asmFile.find(".s"), 2, ".o" );//create name of object file
+
+  outfile.open( objFile.c_str(), ios::out );
+  if( !outfile.is_open() ){
+    cout << "Error opening output file. " << endl;
+    return -1;
+  }
+  outfile << setfill('0') ; //newly added
+  //parsing loop
+  getline( infile, line);
+  while( !infile.eof() ){
+      istringstream str( line.c_str() );
+      str >> opcode;
+      if( !opcode.empty() ){ //check for black lines
+	  if( instr_set.count(opcode) > 0 )//make sure instruction is in map
+	      (this->*instr_set[opcode])( outfile, str );
+	  else if( opcode[0] != '!' ){
+	      cout << "Error. In line:" << LineNumber << endl
+		   << "Invalid Instruction:  " << line << endl;
+	      otherError = true;
+	  }
+	  RD = RS = -1;
+	  CONST = 129;
+	  extraArg = "!";      
+      }
+      LineNumber++;
+      opcode.clear();
+      getline( infile , line );
+  }
+  infile.close();
+  outfile.close();
+
+  if( otherError )
+      return -1;
+
+  return 0;
+}
+      
+void Assembler::load( fstream& out, istringstream& str )
+{
+  str >> RD >> ADDR >> extraArg;
+  if( VALID_RD && VALID_ADDR && COMMENT)
+    out << setw(5) << ((RD << 9)| ADDR ) << endl;
+  else
+      Invalid_Arg("load");
+}
+
+void Assembler::loadi( fstream& out, istringstream& str )
+{
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ((RD << 9)|(1 << 8)|(CONST & 0xff)) << endl;
+  else
+      Invalid_Arg("loadi");
+}
+
+void Assembler::store(fstream& out, istringstream& str)
+{
+  str >> RD >> ADDR >> extraArg;
+  if( VALID_RD && VALID_ADDR && COMMENT )
+    out << setw(5) << ( (1 << 11) | (RD << 9) | ADDR ) << endl;
+  else
+      Invalid_Arg("store");
+}
+
+void Assembler::add(fstream& out, istringstream& str ) 
+{
+  str >> RD >> RS >> extraArg;
+  if( VALID_RD && VALID_RS && COMMENT )
+    out << setw(5) << ((2 << 11) | (RD << 9) | (RS << 6) ) << endl;    
+  else
+      Invalid_Arg("add");
+}
+
+void Assembler::addi(fstream& out, istringstream& str)
+{
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ( ((2 << 11) | (RD << 9) | (1 << 8)) | (CONST & 0xff) ) << endl;
+  else
+      Invalid_Arg("addi");
+}
+
+void Assembler::addc(fstream& out, istringstream& str)
+{
+  str >> RD >> RS >> extraArg;
+  if( VALID_RD && VALID_RS && COMMENT )
+    out << setw(5) << ( (3 << 11) | (RD << 9) | (RS << 6) ) << endl;    
+  else
+      Invalid_Arg("addc");
+}
+
+void Assembler::addci(fstream& out, istringstream& str)
+{
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ( ((3 << 11) | (RD << 9) | (1 << 8)) | (CONST & 0xff) ) << endl;
+  else
+      Invalid_Arg("addci");
+}
+
+void Assembler::sub(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> RS >> extraArg;
+  if( VALID_RD && VALID_RS && COMMENT )
+    out << setw(5) << ( (4 << 11) | (RD << 9) | (RS << 6) ) << endl;    
+  else
+      Invalid_Arg("sub");
+}
+
+void Assembler::subi(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ( ((4 << 11) | (RD << 9) | (1 << 8)) | (CONST & 0xff) ) << endl;
+  else
+      Invalid_Arg("subi");
+}
+
+void Assembler::subc(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> RS >> extraArg;
+  if( VALID_RD && VALID_RS && COMMENT )
+    out << setw(5) << ( (5 << 11) | (RD << 9) | (RS << 6) ) << endl;    
+  else
+      Invalid_Arg("subc");
+}
+
+void Assembler::subci(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ( ((5 << 11) | (RD << 9) | (1 << 8)) | (CONST & 0xff) ) << endl;
+  else
+      Invalid_Arg("subci");
+}
+
+void Assembler::And(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> RS >> extraArg;
+  if( VALID_RD && VALID_RS && COMMENT )
+    out << setw(5) << ( (6 << 11) | (RD << 9) | (RS << 6) ) << endl;    
+  else
+      Invalid_Arg("and");
+}
+
+void Assembler::Andi(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ( ((6 << 11) | (RD << 9) | (1 << 8)) | (CONST & 0xff) ) << endl;
+  else
+      Invalid_Arg("andi");
+}
+
+void Assembler::Xor(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> RS >> extraArg;
+  if( VALID_RD && VALID_RS && COMMENT )
+    out << setw(5) << ( (7 << 11) | (RD << 9) | (RS << 6) ) << endl;    
+  else
+      Invalid_Arg("xor");
+}
+
+void Assembler::Xori(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ( ((7 << 11) | (RD << 9) | (1 << 8)) | (CONST & 0xff) ) << endl;
+  else
+      Invalid_Arg("xori");
+}
+
+void Assembler::Compl(fstream& out, istringstream& str)
+{
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5)  << ( (8 << 11)|(RD << 9) ) << endl; 
+  else
+      Invalid_Arg("compl");
+}
+
+void Assembler::shl(fstream& out, istringstream& str)
+{
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (9 << 11)|(RD << 9) ) << endl; 
+  else
+      Invalid_Arg("shl");
+}
+
+void Assembler::shla(fstream& out, istringstream& str)
+{
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (10 << 11)|(RD << 9) ) << endl; 
+  else
+      Invalid_Arg("shla");
+}
+
+void Assembler::shr(fstream& out, istringstream& str)
+{
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (11 << 11)|(RD << 9) ) << endl; 
+  else
+      Invalid_Arg("shr");
+}
+
+void Assembler::shra(fstream& out, istringstream& str)
+{
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (12 << 11)|(RD << 9) ) << endl; 
+  else
+      Invalid_Arg("shra");
+}
+
+void Assembler::compr(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> RS >> extraArg;
+  if( VALID_RD && VALID_RS && COMMENT )
+    out << setw(5) << ( (13 << 11) | (RD << 9) | (RS << 6) ) << endl;    
+  else
+      Invalid_Arg("compr");
+}
+
+void Assembler::compri(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> CONST >> extraArg;
+  if( VALID_RD && VALID_CONST && COMMENT )
+    out << setw(5) << ( ((13 << 11) | (RD << 9) | (1 << 8)) | (CONST & 0xff) ) << endl;
+  else
+      Invalid_Arg("compri");
+}
+
+void Assembler::getstat(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (14 << 11)|(RD << 9) ) << endl;
+  else
+      Invalid_Arg("getstat");
+}
+
+void Assembler::putstat(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (15 << 11)|(RD << 9) ) << endl;
+  else
+      Invalid_Arg("putstat");
+}
+
+void Assembler::jump(fstream& out, istringstream& str) 
+{ 
+  str >> ADDR >> extraArg;
+  if( VALID_ADDR && COMMENT )
+    out << setw(5) << ( (16 << 11)| ADDR ) << endl;
+  else
+      Invalid_Arg("jump");
+}
+
+void Assembler::jumpl(fstream& out, istringstream& str) 
+{ 
+  str >> ADDR >> extraArg;
+  if( VALID_ADDR && COMMENT )
+    out << setw(5) << ( (17 << 11)| ADDR ) << endl;
+  else
+      Invalid_Arg("jumpl");
+}
+
+void Assembler::jumpe(fstream& out, istringstream& str) 
+{ 
+  str >> ADDR >> extraArg;
+  if( VALID_ADDR && COMMENT )
+    out << setw(5) << ( (18 << 11)| ADDR ) << endl;
+  else
+      Invalid_Arg("jumpe");
+}
+
+void Assembler::jumpg(fstream& out, istringstream& str) 
+{ 
+  str >> ADDR >> extraArg;
+  if( VALID_ADDR && COMMENT )
+    out << setw(5) << ( (19 << 11)| ADDR ) << endl;
+  else
+      Invalid_Arg("jumpg");
+}
+
+void Assembler::call(fstream& out, istringstream& str)
+{
+  str >> ADDR >> extraArg;
+  if( VALID_ADDR && COMMENT )
+    out << setw(5) << ( (20 << 11) | ADDR ) << endl;
+  else
+      Invalid_Arg("call");
+}
+
+void Assembler::Return(fstream& out, istringstream& str)
+{
+  str >> extraArg;
+  if( COMMENT )
+    out << setw(5) << (21 << 11) << endl; 
+  else
+      Invalid_Arg("return");
+}
+
+void Assembler::read(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (22 << 11)|(RD << 9) ) << endl;
+  else
+      Invalid_Arg("read");
+}
+
+void Assembler::write(fstream& out, istringstream& str) 
+{ 
+  str >> RD >> extraArg;
+  if( VALID_RD && COMMENT )
+    out << setw(5) << ( (23 << 11)|(RD << 9) ) << endl;
+  else
+      Invalid_Arg("write");
+}
+
+void Assembler::halt(fstream& out, istringstream& str)
+{
+  str >> extraArg;
+  if( COMMENT )
+    out << setw(5) << (24 << 11) << endl; 
+  else
+      Invalid_Arg("halt");
+}
+
+void Assembler::noop(fstream& out, istringstream& str)
+{
+  str >> extraArg;
+  if( COMMENT )
+    out << setw(5) << (25 << 11) << endl; 
+  else
+      Invalid_Arg("noop");
+}
+
+void Assembler::Invalid_Arg( string instr )
+{
+  cout << "Error in line " << LineNumber << ". Invalid operand for '"
+       << instr << "' instruction. " << endl;
+  otherError = true;
+}
+

@@ -1,0 +1,46 @@
+#ifndef _PCB_H_
+#define _PCB_H_
+#include <fstream>
+#include <iostream>
+#include <vector>
+#include "PageTable.h"
+#define REG_FILE_SIZE    4
+using namespace std;
+
+enum Algorithm { FIFO, LRU };
+
+class PCB {
+public:
+  friend class os;  
+  friend class VirtualMachine;
+
+  PCB(){}
+  PCB(string,int);
+
+private:
+  bool initIO();		
+  void freeResources();
+  void setupPgTable();
+
+  int PC, SR, SP;
+  int BASE, LIMIT;
+  int IR;
+  PageTable pgTable;
+  vector<int> R;
+  ifstream diskIn;
+  fstream objFile;
+  ofstream diskOut;
+  fstream stackFile;
+  string p_name;
+  int PID;
+  int timeSlice;
+  int CPUtime, waitTime;
+  int turnAroundTime;
+  int IOtime;
+  int interrptTime;
+  int stackSize;
+  int oldTime;
+  int topOfStack;
+  bool pagedOut;
+};
+#endif

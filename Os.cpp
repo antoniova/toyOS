@@ -1,0 +1,442 @@
+#include "Os.h"
+
+os::os()
+{
+  idleTime = 0;
+  contextSWcount = 0;
+  faultAddress = faultPage = 0;
+  for( int i = 0 ; i < 32 ; i++ ) //create free-frames list
+    freeFrames.push_back(i);
+}
+
+os::os( Algorithm alg )
+{
+  replacementAlg = alg;
+  idleTime = 0;
+  contextSWcount = 0;
+  faultAddress = faultPage = 0;
+  for( int i = 0 ; i < 32 ; i++ ) //create free-frames list
+    freeFrames.push_back(i);
+  vMach.setAlgorithm(alg);
+}
+
+bool os::compileSrcFiles()
+{
+  string asmFile;
+  system("ls *.s > src_progs");
+  input.open( "src_progs" );
+  if( !input.good() ){
+      cout << "Encountered error while compiling files\n";
+      return false;
+  }
+  getline( input, asmFile );
+  while( !input.eof() ){
+      if(  Asm.assemble(asmFile)  < 0 )
+          return false;
+      asmFile.replace( asmFile.find(".s"), 2, ".o"); 
+      objFiles.push_back(asmFile); // save .o files produced
+      getline( input, asmFile );
+  }
+  input.close();
+  return true;
+}  
+
+void os::loadPage( int pid, int frameNbr, int pageNbr )
+{
+  int data;
+  PCB* prc = findProcess(pid);
+
+  prc->objFile.seekg(pageNbr*48);//move pointer to right location
+  int startAddr = frameNbr * 8; // find right starting address in mem.
+  int i = 0;
+  prc->objFile >> data;
+  while( !prc->objFile.eof() && (i < 8) ){
+      vMach.mem[startAddr++] = data;
+      prc->objFile >> data;
+      i++;
+  }
+  prc->objFile.clear(); // reset flags
+  prc->pgTable.table[pageNbr] = ((frameNbr << 2) | 2); // update page table
+  vMach.InvertedTable[frameNbr] = ( (pageNbr << 8) | pid ); // update inverted table
+  if( replacementAlg == FIFO )
+      vMach.FrameReg[frameNbr] = vMach.clock;
+}
+
+bool os::loadObjFiles()
+{
+// load all executable files into memory
+  for( int i = 0; i < objFiles.size(); i++ ){
+
+      // create new process. provide name and PID
+      PCB* job = new PCB( objFiles[i], i + 1 ); 
+      if( !job->initIO() )
+	  return false;
+      job->setupPgTable();
+      jobs.push_back(job);
+  }
+  tempJobList = jobs;
+  return true;
+}
+
+/*****************************************
+This function schedules processes to run from the 
+main list of jobs. After a process ends, a new 
+process can be scheduled to run by calling this function.
+*****************************************/
+void os::scheduleJobs(int jobCount)
+{
+  PCB* temp;
+  int frame;
+  if( !tempJobList.empty() ){
+      while( jobCount > 0 ){
+	  temp = tempJobList.front();
+	  tempJobList.pop_front();
+          pushIntoReadyQ(temp);
+	  if( !freeFrames.empty() ){
+	      frame = searchfreeFrames(temp);
+	      if( frame < 0 )
+		  frame = repAlgorithm(temp);
+	      loadPage( temp->PID, frame, 0 );
+	  }else{
+	      frame = repAlgorithm(temp);
+	      loadPage( temp->PID, frame, 0 );
+	  }
+	  jobCount--;
+      }
+  }
+}
+
+void os::pushIntoReadyQ( PCB* process )
+{
+// Save current time before queueing up process in readyQ.
+// Once this process is about to run ( popped from readyQ ),
+// we get the difference in times and add to waitTime.
+  process->oldTime = vMach.clock;
+  readyQ.push(process);
+}
+
+void os::loadNextProcess()
+{
+  running = readyQ.front();
+  if( running == NULL )                // much work went into avoiding the scenario
+      cout << "Null pointer" << endl;    // where this happens, but if it does, the program
+                                      // will inevitably crash. Must fix for next version
+  readyQ.pop();                        
+  vMach.PC = running->PC;
+  vMach.IR = running->IR;
+  vMach.pagedOut = running->pagedOut;
+  vMach.TLB = running->pgTable;
+  vMach.BASE = running->BASE;
+  vMach.LIMIT = running->LIMIT;
+  vMach.R[0] = running->R[0];
+  vMach.R[1] = running->R[1];
+  vMach.R[2] = running->R[2];
+  vMach.R[3] = running->R[3];
+  vMach.SR = running->SR;
+  loadStacktoMem();
+  vMach.SP = running->SP;
+  vMach.stack_top = running->topOfStack;
+  vMach.STOP = false;
+  vMach.clock += 10; // context switch time
+  running->waitTime += vMach.clock - running->oldTime;
+  running->oldTime = vMach.clock; // save current time
+}
+
+void os::saveProcesState()
+{
+  running->CPUtime += vMach.clock - running->oldTime;
+  running->PC = vMach.PC;
+  running->IR = vMach.IR;
+  running->pagedOut = vMach.pagedOut;
+  running->BASE = vMach.BASE;
+  running->pgTable = vMach.TLB;
+  running->LIMIT = vMach.LIMIT;
+  running->R[0] = vMach.R[0];
+  running->R[1] = vMach.R[1];
+  running->R[2] = vMach.R[2];
+  running->R[3] = vMach.R[3];
+  running->SR = vMach.SR;
+  if( vMach.SP < 256 ){ //do we need to save the process's stack?
+      running->stackFile.seekp(0);
+      running->stackFile << setfill('0');
+      for( int i = vMach.SP; i < 256; i++)
+	  running->stackFile << setw(5) << vMach.mem[i] << endl;
+  }      
+  running->SP = vMach.SP;
+  running->stackSize = 256 - vMach.stack_top;
+  running->topOfStack = vMach.stack_top;
+  contextSWcount++;
+}
+
+void os::runScheduler()
+{
+  if( jobs.size() > 5 )
+      scheduleJobs(5);
+  else
+      scheduleJobs( jobs.size() );
+  
+  while( !readyQ.empty() || !waitQ.empty() ){
+      loadNextProcess();
+      vMach.runProcess(running);
+      saveProcesState();
+      switch( VM_RET_STATUS ){
+          case 0: if( PAGE_FAULT || OVERFLOW ){
+	              SYS_trap();
+		      break;
+		  }
+		  queryWaitQueue();
+		  pushIntoReadyQ(running);
+		  break;
+          case 6: IO_trap(); // read instruction
+	          queryWaitQueue();
+		  break;
+          case 7: IO_trap(); // write instruction
+	          queryWaitQueue();
+		  break;
+         default: queryWaitQueue(); 
+	          SYS_trap();//all others are system traps 
+		  freeMemory();
+		  scheduleJobs(1);
+      }
+  }
+  outputStatistics();
+}
+
+void os::queryWaitQueue()
+{
+  if( !waitQ.empty() ){
+      PCB* candidate = waitQ.front();
+      if( vMach.clock >= candidate->interrptTime ){
+	  candidate->IOtime += vMach.clock - candidate->oldTime;
+	  pushIntoReadyQ(candidate);
+	  waitQ.pop();
+      }else if( readyQ.empty() && (VM_RET_STATUS != TIME_SLICE || PAGE_FAULT)){
+	  //force process out of waitQ. increase idle time
+	  idleTime += candidate->interrptTime - vMach.clock;
+	  vMach.clock = candidate->interrptTime;
+	  candidate->IOtime += vMach.clock - candidate->oldTime;
+	  pushIntoReadyQ(candidate);
+	  waitQ.pop();
+      }
+  }
+}
+
+void os::IO_trap()
+{
+  if( VM_RET_STATUS == READ )
+      running->diskIn >> running->R[IO_REGISTER];
+  else
+      running->diskOut << running->R[IO_REGISTER] << endl;
+  running->interrptTime = vMach.clock + 28;
+  running->oldTime = vMach.clock;
+  waitQ.push(running);
+}
+
+void os::SYS_trap()
+{
+  if( OVERFLOW == 1 ){
+      queryWaitQueue();
+      running->diskOut << "Overflow." << endl;
+      running->SR &= 0xffffffef; // clear overflow bit
+      pushIntoReadyQ(running);
+      return;
+  }
+  if( PAGE_FAULT ){
+      int victimFrame;
+      if( vMach.stackRequest ){
+	  victimFrame = vMach.futureStackFrame;
+	  stack_frameRequest(victimFrame);
+	  readyQpushFront(running);
+	  vMach.stackRequest = false;
+	  return;
+      }   
+      if( !freeFrames.empty() ){
+	  victimFrame = searchfreeFrames(running);
+	  if( victimFrame < 0 )
+	      victimFrame = repAlgorithm(running);
+	  faultPage = ( vMach.TLB.getFaultAddress() >> 3 ); 
+	  loadPage( running->PID, victimFrame, faultPage );
+      }else{
+	  victimFrame = repAlgorithm(running);
+	  faultPage = ( vMach.TLB.getFaultAddress() >> 3 );
+	  loadPage( running->PID, victimFrame, faultPage ); 
+      }
+      running->interrptTime = vMach.clock + 35;
+      running->oldTime = vMach.clock;
+      waitQ.push(running);
+      queryWaitQueue();
+      return;
+  }
+  // if not an overflow or a page fault, then process is finished. 
+  // check for exiting status and write appropriate message.
+  running->diskOut << "Exit status: ";
+  switch( VM_RET_STATUS ){
+      case 1: running->diskOut << "Program finished execution successfully." << endl;
+	      running->turnAroundTime = vMach.clock;
+	      break;
+      case 2: running->diskOut << "Run-time error: attempted to access an "
+			       << "address that is out of bounds." << endl;
+	      break;
+      case 3: running->diskOut << "Run-time error: stack overflow." << endl;
+              break;
+      case 4: running->diskOut << "Run-time error: stack underflow." << endl;
+              break;
+      case 5: running->diskOut << "Run-time error: Encountered invalid instruction." << endl;
+      }
+}
+
+void os::outputStatistics()
+{
+  double throughPut = (jobs.size())/(vMach.clock/10000.0);
+  double cpuUtil = (vMach.clock-idleTime)/(vMach.clock*1.0);
+  double totalCPUtime = 0;
+  list<PCB*>::iterator it;
+  for( it = jobs.begin(); it != jobs.end(); it++ )
+      totalCPUtime += (*it)->CPUtime;
+  for( it = jobs.begin(); it != jobs.end(); it++ ){
+      (*it)->diskOut << "**** Process Information ****" << endl;
+      (*it)->diskOut << "CPU Time = " << (*it)->CPUtime << endl;
+      (*it)->diskOut << "Waiting Time = " << (*it)->waitTime << endl;
+      (*it)->diskOut << "Turnaround Time = " << (*it)->turnAroundTime << endl;
+      (*it)->diskOut << "I/O Time = " << (*it)->IOtime << endl;
+      (*it)->diskOut << "Largest Stack Size = " << (*it)->stackSize << endl;
+      (*it)->diskOut << "Page faults = " << (*it)->pgTable.pagefaults << endl;
+      (*it)->diskOut << "Hit Ratio = " << (*it)->pgTable.getHitRatio() << endl;
+      (*it)->diskOut << "**** System Information ****" << endl;
+      (*it)->diskOut << "System Time = " << (10*contextSWcount)+idleTime << endl;
+      (*it)->diskOut << "System CPU Utilization = " << cpuUtil*100 << "%" << endl;
+      (*it)->diskOut << "User CPU Utilization = " << (totalCPUtime/vMach.clock)*100 << "%" << endl;
+      (*it)->diskOut << "Throughput = " << throughPut << endl;
+  }
+}
+
+// free memory used by finished process.
+void os::freeMemory()
+{
+  int tableEntry;
+  int frame;
+  int pgTableSize = running->pgTable.table.size();
+  for( int i = 0; i < pgTableSize; i++ ){
+      tableEntry = running->pgTable.table[i];
+      if( ((tableEntry & 2) >> 1) == 1 ){     //check for valid bit in table entry
+	  frame = (tableEntry >> 2); // extract frame number from table entry
+	  freeFrames.push_front(frame);
+	  vMach.InvertedTable[frame] = 0;
+      }
+  }
+} 
+
+//this function searches the freeFrame list
+int os::searchfreeFrames(PCB* proc)
+{
+  int frame;
+  int frameLimit = ( proc->SP >> 3 );
+  list<int>::iterator it;
+  for( it = freeFrames.begin(); it != freeFrames.end(); it++ )
+      if( *it < frameLimit ){
+	  frame = *it;
+	  freeFrames.erase(it);
+	  break;
+      }
+  if( it == freeFrames.end() )
+      frame = -1;
+
+  return frame;
+}
+
+// Since both replacement algorithms look for the
+// frame register with the lowest value, we can use
+// the same function for both algorithms.
+int os::repAlgorithm(PCB * proc)
+{
+  int frame = 0;
+  int searchLimit = ( proc->SP >> 3 );
+  int lowest = vMach.FrameReg[0];
+  for( int i = 1; i < searchLimit; i++ )
+      if( lowest > vMach.FrameReg[i] ){
+	  lowest = vMach.FrameReg[i];
+	  frame = i;
+      }  
+  int pid = (vMach.InvertedTable[frame] & 0xff); // get PID from inverted table 
+  int page = (vMach.InvertedTable[frame] >> 8);  // get page from inverted table
+  PCB* temp = findProcess(pid);
+  int Tblentry = temp->pgTable.table[page];
+  if( (Tblentry & 1) == 1 ) //  mod bit
+      writePage( pid, frame, page );
+  else{
+      temp->pgTable.table[page] = 0;
+      vMach.InvertedTable[frame] = 0;
+  }
+  return frame;
+}  
+
+// This function writes the selected 
+// page back to '.o' file ( simulated disk )
+void os::writePage( int pid, int frameNbr, int pageNbr)
+{
+  PCB* prc = findProcess(pid);
+  int data;
+  prc->objFile.seekp(0);
+  prc->objFile.seekp(pageNbr *48 );
+  prc->objFile << setfill('0');
+  int startAddr = frameNbr * 8; // find right starting address in mem.
+  for( int i = 0; i < 8; i++ ){
+      data = vMach.mem[startAddr];
+      prc->objFile << setw(5) << data << endl;
+      startAddr++;
+  }
+
+  prc->objFile.clear();
+  prc->pgTable.table[pageNbr] = 0; // clear page entry (unset valid bit)
+  vMach.InvertedTable[frameNbr] = 0; // clear inverted table entry
+}
+
+void os::stack_frameRequest(int frame)
+{
+  int entry = vMach.InvertedTable[frame];
+  int pid = (entry & 0xff);  // get pid from inverted table entry
+  int page = entry >> 8;   // get page number from table entry
+  PCB* temp = findProcess(pid);
+  if( (temp->pgTable.table[page] & 1) == 1 ) //mod bit
+      writePage( pid, frame, page );
+  else{
+      temp->pgTable.table[page] = 0;
+      vMach.InvertedTable[frame] = 0;
+  }  
+}
+
+PCB* os::findProcess( int pid )
+{
+  list<PCB*>::iterator it;  
+  for( it = jobs.begin(); it != jobs.end(); it++ )
+      if( (*it)->PID == pid ) //find process by PID
+	  return *it;
+}
+
+void os::readyQpushFront( PCB* proc )
+{
+ if( readyQ.empty() )
+      pushIntoReadyQ(proc);
+  else{
+      pushIntoReadyQ(proc);
+      int rotations = readyQ.size() - 1;
+      while( rotations > 0 ){
+	  readyQ.push( readyQ.front() );
+	  readyQ.pop();
+	  rotations--;
+      }
+  }
+}
+
+void os::loadStacktoMem()
+{
+  if( running->SP < 256 ){
+      running->stackFile.seekg(0);
+      for( int i = running->SP; i < 256; i++){
+	  if( (vMach.InvertedTable[i >> 3] & 0xff) != 0 )
+	      stack_frameRequest(i>>3);
+
+	  running->stackFile >> vMach.mem[i];
+      }
+  }
+}

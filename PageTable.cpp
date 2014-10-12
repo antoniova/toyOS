@@ -1,0 +1,46 @@
+#include "PageTable.h"
+
+PageTable::PageTable()
+{
+  faultAddr = 0;
+  pageNbr = 0;
+  progSize = 0;
+  references = 0;
+  pagefaults = 0;
+  hits = 0;
+}
+
+PageTable& PageTable::operator=( PageTable& p )
+{
+  table = p.table;
+  progSize = p.progSize;
+  faultAddr = p.faultAddr;
+  references = p.references;
+  pagefaults = p.pagefaults;
+  hits = p.hits;
+  return *this;
+}
+
+int PageTable::operator[]( int log_addr )
+{
+  references++;
+  faultAddr = log_addr;
+
+  if( log_addr > progSize ) //out of bounds error
+      return -2;
+  
+  pageNbr = log_addr >> 3; //extract page# from logical addr
+
+  if( VALID_BIT == 1 ){
+      hits++;
+      return ((log_addr & 0x7) | ((table[pageNbr] & 0x7c) << 1));// get frame# from table entry
+  }else{                                                         // and form physical address
+      pagefaults++;
+      return -1; // page fault
+  }
+}
+
+double PageTable::getHitRatio()
+{
+  return   ( hits / (references * 1.0));
+}

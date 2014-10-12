@@ -1,0 +1,8 @@
+#!/bin/bash
+DEST_FOLDER=/home/user/cse460_bak/lab3/version3/
+
+cp *.h $DEST_FOLDER
+cp *.cpp $DEST_FOLDER
+cp makefile $DEST_FOLDER
+
+echo "copied files"
